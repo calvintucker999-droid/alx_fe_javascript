@@ -18,6 +18,13 @@
     <input id="newQuoteCategory" type="text" placeholder="Enter quote category" />
     <button onclick="addQuote()">Add Quote</button>
   </div>
+  <h2>Import / Export Quotes</h2>
+  <div>
+    <button id="exportJsonBtn">Export Quotes (JSON)</button>
+    <input type="file" id="importFile" accept=".json" />
+  </div>
+
+  <p id="status" role="status" aria-live="polite"></p>
   <!-- Link to JavaScript file -->
     <script src="script.js"></script>
   </body>
