@@ -317,3 +317,86 @@ function init() {
 
 // Run init on DOMContentLoaded to ensure elements are available
 document.addEventListener('DOMContentLoaded', init);
+
+function populateCategories() {
+  const categorySelect = document.getElementById('categoryFilter');
+  const selectedCategory = localStorage.getItem('selectedCategory') || 'all';
+
+  // Clear old options (except the "All" one)
+  categorySelect.innerHTML = '<option value="all">All Categories</option>';
+
+  // Get unique category list
+  const categories = [...new Set(quotes.map(q => q.category))];
+
+  // Add each category as an option
+  categories.forEach(category => {
+    const option = document.createElement('option');
+    option.value = category;
+    option.textContent = category;
+    if (category === selectedCategory) {
+      option.selected = true;
+    }
+    categorySelect.appendChild(option);
+  });
+}
+2️⃣ Filter Quotes Based on Category
+javascript
+Copy code
+function filterQuotes() {
+  const categorySelect = document.getElementById('categoryFilter');
+  const selectedCategory = categorySelect.value;
+
+  // Save filter preference to local storage
+  localStorage.setItem('selectedCategory', selectedCategory);
+
+  let filteredQuotes;
+  if (selectedCategory === 'all') {
+    filteredQuotes = quotes;
+  } else {
+    filteredQuotes = quotes.filter(q => q.category === selectedCategory);
+  }
+
+  // If no quotes match, show a message
+  if (filteredQuotes.length === 0) {
+    quoteDisplay.innerHTML = `<p>No quotes available for "${selectedCategory}".</p>`;
+  } else {
+    // Show one random quote from the filtered list
+    const randomIndex = Math.floor(Math.random() * filteredQuotes.length);
+    renderQuote(filteredQuotes[randomIndex]);
+  }
+}
+function addQuote() {
+  const text = newQuoteText.value.trim();
+  const category = newQuoteCategory.value.trim() || 'Uncategorized';
+
+  if (!text) {
+    setStatus('Please enter a quote text.', true);
+    return;
+  }
+
+  const exists = quotes.some(q => q.text.trim().toLowerCase() === text.toLowerCase());
+  if (exists) {
+    setStatus('Quote already exists.', true);
+    return;
+  }
+
+  const newQuote = { text, category };
+  quotes.push(newQuote);
+  saveQuotes();
+  setStatus('Quote added successfully!');
+
+  renderQuote(newQuote);
+  populateCategories(); // 👈 Update dropdown list
+  newQuoteText.value = '';
+  newQuoteCategory.value = '';
+}
+function init() {
+  loadQuotes();
+  wireUp();
+  populateCategories(); // 👈 Build dropdown list
+
+  // Restore last filter or show random
+  const lastCategory = localStorage.getItem('selectedCategory') || 'all';
+  document.getElementById('categoryFilter').value = lastCategory;
+  filterQuotes(); // 👈 Show filtered quotes immediately
+}
