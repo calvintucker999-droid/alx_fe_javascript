@@ -400,3 +400,210 @@ function init() {
   document.getElementById('categoryFilter').value = lastCategory;
   filterQuotes(); // 👈 Show filtered quotes immediately
 }
+{
+  id: "uuid-or-number",
+  text: "Quote text",
+  category: "Motivation",
+  lastModified: 1660000000000  // UNIX ms timestamp
+}
+/***** Sync & Conflict Handling for Dynamic Quote Generator *****/
+
+/* CONFIG: set your server endpoint here (must return JSON array of quote objects) */
+const SERVER_URL = 'https://my-mock-server.example.com/quotes'; // <- replace with real endpoint
+const SYNC_INTERVAL_MS = 1000 * 60 * 1; // 1 minute polling (change as needed)
+
+/* UI elements for notifications / conflict review (create these in index.html or dynamically) */
+const syncStatusEl = document.getElementById('syncStatus') || createSyncStatusEl();
+const conflictReviewEl = document.getElementById('conflictReview') || createConflictReviewEl();
+
+function createSyncStatusEl() {
+  const el = document.createElement('div');
+  el.id = 'syncStatus';
+  el.style.position = 'fixed';
+  el.style.right = '12px';
+  el.style.bottom = '12px';
+  el.style.background = 'rgba(0,0,0,0.8)';
+  el.style.color = 'white';
+  el.style.padding = '8px 12px';
+  el.style.borderRadius = '6px';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  return el;
+}
+
+function createConflictReviewEl() {
+  const container = document.createElement('div');
+  container.id = 'conflictReview';
+  container.style.position = 'fixed';
+  container.style.left = '12px';
+  container.style.bottom = '12px';
+  container.style.width = '320px';
+  container.style.maxHeight = '60vh';
+  container.style.overflow = 'auto';
+  container.style.background = '#fff';
+  container.style.border = '1px solid #ccc';
+  container.style.padding = '10px';
+  container.style.borderRadius = '6px';
+  container.style.display = 'none';
+  container.innerHTML = `<h4 style="margin:0 0 8px 0;">Conflict Review</h4><div id="conflictsList"></div>`;
+  document.body.appendChild(container);
+  return container;
+}
+
+function showSyncStatus(msg, timeout = 4000) {
+  syncStatusEl.textContent = msg;
+  syncStatusEl.style.display = 'block';
+  setTimeout(() => syncStatusEl.style.display = 'none', timeout);
+}
+
+/* Fetch server quotes (GET) - simple fetch with error handling */
+async function fetchServerQuotes() {
+  try {
+    const resp = await fetch(SERVER_URL, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('Network error: ' + resp.status);
+    const serverData = await resp.json();
+    // Expect serverData to be an array of quote objects
+    return Array.isArray(serverData) ? serverData : [];
+  } catch (err) {
+    console.error('fetchServerQuotes error', err);
+    return null; // null indicates fetch failed
+  }
+}
+
+/* Merge server data into local quotes with conflict detection */
+function mergeServerData(serverQuotes) {
+  if (!Array.isArray(serverQuotes)) return { added: 0, updated: 0, conflicts: [] };
+
+  const localById = new Map(quotes.map(q => [String(q.id), q]));
+  const serverById = new Map(serverQuotes.map(q => [String(q.id), q]));
+
+  const conflicts = [];
+  let added = 0, updated = 0;
+
+  // 1) Add or update from server
+  serverQuotes.forEach(sq => {
+    const id = String(sq.id);
+    const local = localById.get(id);
+
+    if (!local) {
+      // new on server -> add locally
+      quotes.push(sq);
+      added++;
+    } else {
+      // both exist -> check lastModified
+      const localTS = Number(local.lastModified) || 0;
+      const serverTS = Number(sq.lastModified) || 0;
+
+      if (serverTS > localTS) {
+        // server is newer -> overwrite local (server wins)
+        // store local copy for conflict review
+        conflicts.push({ id, localCopy: { ...local }, serverCopy: { ...sq }, actionTaken: 'server-applied' });
+        // apply server copy
+        const idx = quotes.findIndex(q => String(q.id) === id);
+        if (idx >= 0) { quotes[idx] = sq; }
+        updated++;
+      } else if (serverTS < localTS) {
+        // local is newer than server — according to requirement we still accept server automatically,
+        // but keep a record for user's review so they can restore local if desired.
+        conflicts.push({ id, localCopy: { ...local }, serverCopy: { ...sq }, actionTaken: 'server-applied' });
+        const idx = quotes.findIndex(q => String(q.id) === id);
+        if (idx >= 0) { quotes[idx] = sq; }
+        updated++;
+      } else {
+        // equal timestamps -> nothing to do
+      }
+    }
+  });
+
+  // 2) Optionally: detect items that exist locally but not on server (we keep local copies)
+  // (No automatic deletion to avoid data loss)
+
+  // save local storage after merging
+  saveQuotes();
+
+  return { added, updated, conflicts };
+}
+
+/* Show conflict review UI where user can restore local copies if they prefer */
+function showConflictReview(conflicts) {
+  if (!conflicts || conflicts.length === 0) return;
+  const list = document.getElementById('conflictsList');
+  list.innerHTML = ''; // clear
+  conflicts.forEach(c => {
+    const item = document.createElement('div');
+    item.style.marginBottom = '8px';
+    item.style.borderBottom = '1px solid #eee';
+    item.innerHTML = `
+      <p style="margin:0;"><strong>ID:</strong> ${c.id}</p>
+      <p style="margin:0 0 6px 0;"><strong>Server:</strong> ${escapeHtml(c.serverCopy.text)} <em>(${escapeHtml(c.serverCopy.category)})</em></p>
+      <p style="margin:0 0 6px 0;"><strong>Your local:</strong> ${escapeHtml(c.localCopy.text)} <em>(${escapeHtml(c.localCopy.category)})</em></p>
+    `;
+    const btnKeepLocal = document.createElement('button');
+    btnKeepLocal.textContent = 'Restore Local';
+    btnKeepLocal.style.marginRight = '6px';
+    btnKeepLocal.onclick = () => {
+      // restore local version
+      const idx = quotes.findIndex(q => String(q.id) === c.id);
+      if (idx >= 0) quotes[idx] = c.localCopy;
+      saveQuotes();
+      setStatus(`Local quote restored for id ${c.id}`);
+      // remove item from UI
+      item.remove();
+    };
+
+    const btnAcceptServer = document.createElement('button');
+    btnAcceptServer.textContent = 'Keep Server';
+    btnAcceptServer.onclick = () => {
+      // server already applied; just remove UI item
+      item.remove();
+    };
+
+    item.appendChild(btnKeepLocal);
+    item.appendChild(btnAcceptServer);
+    list.appendChild(item);
+  });
+
+  conflictReviewEl.style.display = 'block';
+}
+
+/* High-level sync flow: fetch -> merge -> notify user */
+async function performSync() {
+  const serverQuotes = await fetchServerQuotes();
+  if (serverQuotes === null) {
+    showSyncStatus('Sync failed (server unreachable).');
+    return;
+  }
+
+  const result = mergeServerData(serverQuotes);
+  if ((result.added + result.updated) > 0) {
+    showSyncStatus(`Synced: +${result.added} added, ${result.updated} updated`);
+  } else {
+    showSyncStatus('No updates from server.');
+  }
+
+  if (result.conflicts && result.conflicts.length > 0) {
+    // show conflict review so user can restore local if desired
+    showConflictReview(result.conflicts);
+  }
+}
+
+/* Start periodic sync */
+let syncTimer = null;
+function startPeriodicSync(intervalMs = SYNC_INTERVAL_MS) {
+  if (syncTimer) clearInterval(syncTimer);
+  // run initial sync immediately
+  performSync();
+  syncTimer = setInterval(performSync, intervalMs);
+}
+function stopPeriodicSync() {
+  if (syncTimer) clearInterval(syncTimer);
+}
+
+/* For manual sync button you might wire it up to call performSync() */
+
+/* Hook into your app initialization */
+document.addEventListener('DOMContentLoaded', () => {
+  // existing init stuff...
+  // after loading local quotes, start sync
+  startPeriodicSync();
+});
